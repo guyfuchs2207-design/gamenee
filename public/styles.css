@@ -1,0 +1,574 @@
+/* ---------------------------------------------------------------
+   Rankle — design tokens
+   Dark-first: this is played on a phone, often at night, and the
+   feedback colours read strongest against a dark field.
+   --------------------------------------------------------------- */
+:root {
+  --bg: #0f1116;
+  --surface: #181b23;
+  --surface-hi: #1f232d;
+  --line: #2a2f3b;
+  --text: #eef1f6;
+  --text-dim: #99a1b3;
+  --text-faint: #6b7385;
+
+  --exact: #54d98c;
+  --exact-ink: #07160d;
+  --near: #f2c14e;
+  --near-ink: #1c1405;
+  --far: #3a4051;
+  --far-ink: #cfd5e2;
+
+  --radius: 14px;
+  --radius-lg: 20px;
+  --row-h: 58px;
+  --gap: 8px;
+  --maxw: 460px;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --shadow-lift: 0 14px 32px rgba(0, 0, 0, 0.55);
+}
+
+/* Light mode is opt-in via the OS, and never overrides an explicit dark choice. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --surface-hi: #f0f2f6;
+    --line: #dfe3ea;
+    --text: #12151c;
+    --text-dim: #5b6374;
+    --text-faint: #8b93a3;
+    --far: #c7cdd9;
+    --far-ink: #454c5c;
+    --shadow-lift: 0 14px 32px rgba(18, 21, 28, 0.18);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Dragging a row must never rubber-band the page. */
+  overscroll-behavior-y: none;
+}
+
+.app {
+  min-height: 100dvh;
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 16px calc(24px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+  padding: 10px 0 6px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+}
+
+.wordmark {
+  margin: 0;
+  text-align: center;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0;
+  transition: color 120ms var(--ease), background 120ms var(--ease);
+}
+.icon-btn:hover { color: var(--text); background: var(--surface-hi); }
+.icon-btn svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.icon-btn svg .solid { fill: currentColor; stroke: none; }
+
+/* ---------- prompt ---------- */
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.prompt { text-align: center; margin-bottom: 18px; }
+
+.prompt__eyebrow {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.prompt__text {
+  margin: 0;
+  font-size: 1.32rem;
+  font-weight: 700;
+  line-height: 1.28;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.prompt__hint {
+  margin: 7px 0 0;
+  font-size: 0.87rem;
+  color: var(--text-dim);
+}
+
+/* ---------- board ---------- */
+
+.board {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  /* Reserve the full board height so the layout does not jump while loading. */
+  min-height: calc(var(--row-h) * 6 + var(--gap) * 5);
+}
+
+.row {
+  height: var(--row-h);
+  display: grid;
+  grid-template-columns: 34px 1fr 26px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  /* Required: without it the browser scrolls instead of letting us drag. */
+  touch-action: none;
+  will-change: transform;
+  transition: background 140ms var(--ease), border-color 140ms var(--ease),
+    box-shadow 140ms var(--ease), color 140ms var(--ease);
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.row__rank {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-faint);
+  text-align: center;
+  transition: color 140ms var(--ease);
+}
+
+.row__label {
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  /* Equal row heights keep the drag maths exact, so labels never wrap. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row__grip {
+  display: grid;
+  gap: 3px;
+  justify-items: center;
+  opacity: 0.4;
+  transition: opacity 140ms var(--ease);
+}
+.row__grip i {
+  display: block;
+  width: 15px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+.row:hover .row__grip { opacity: 0.75; }
+
+.row.is-dragging {
+  cursor: grabbing;
+  box-shadow: var(--shadow-lift);
+  border-color: var(--text-faint);
+  background: var(--surface-hi);
+}
+
+.row.is-lifted {
+  border-color: var(--text-dim);
+  box-shadow: var(--shadow-lift);
+}
+
+/* Graded states — applied after a submission, cleared as soon as the
+   player moves anything, because stale colours would be lies. */
+.row.is-exact {
+  background: var(--exact);
+  border-color: var(--exact);
+  color: var(--exact-ink);
+}
+.row.is-exact .row__rank { color: var(--exact-ink); opacity: 0.6; }
+
+.row.is-near {
+  background: var(--near);
+  border-color: var(--near);
+  color: var(--near-ink);
+}
+.row.is-near .row__rank { color: var(--near-ink); opacity: 0.6; }
+
+.row.is-far {
+  background: var(--far);
+  border-color: var(--far);
+  color: var(--far-ink);
+}
+.row.is-far .row__rank { color: var(--far-ink); opacity: 0.65; }
+
+.board.is-locked .row { cursor: default; }
+
+/* Reveal animation: rows flip in sequence so grading reads as an event. */
+@keyframes flip-in {
+  0%   { transform: rotateX(0deg); }
+  50%  { transform: rotateX(-88deg); }
+  100% { transform: rotateX(0deg); }
+}
+.row.is-revealing {
+  animation: flip-in 480ms var(--ease) both;
+  backface-visibility: hidden;
+}
+
+@keyframes shake {
+  10%, 90% { transform: translateX(-2px); }
+  20%, 80% { transform: translateX(4px); }
+  30%, 50%, 70% { transform: translateX(-6px); }
+  40%, 60% { transform: translateX(6px); }
+}
+.board.is-shaking { animation: shake 500ms var(--ease); }
+
+@keyframes pop {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.055); }
+  100% { transform: scale(1); }
+}
+.row.is-winning { animation: pop 420ms var(--ease) both; }
+
+/* ---------- guess history ---------- */
+
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: center;
+  margin-bottom: 18px;
+  min-height: 12px;
+}
+
+.history__row { display: flex; gap: 4px; }
+
+.pip {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  background: var(--far);
+}
+.pip--exact { background: var(--exact); }
+.pip--near { background: var(--near); }
+
+/* ---------- buttons ---------- */
+
+.actions { display: flex; flex-direction: column; gap: 10px; }
+
+.btn {
+  width: 100%;
+  min-height: 52px;
+  border: 0;
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: transform 90ms var(--ease), opacity 140ms var(--ease),
+    background 140ms var(--ease);
+}
+.btn:active:not(:disabled) { transform: scale(0.985); }
+
+.btn--primary { background: var(--text); color: var(--bg); }
+.btn--primary:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.btn--share { background: var(--exact); color: var(--exact-ink); }
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--line);
+  min-height: 46px;
+  font-weight: 600;
+}
+
+.footnote {
+  margin: 20px 0 0;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-faint);
+}
+
+/* ---------- sheet ---------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.66);
+  backdrop-filter: blur(3px);
+  z-index: 40;
+  animation: fade-in 180ms var(--ease);
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.sheet {
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: min(100%, var(--maxw));
+  max-height: 88dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 22px 20px calc(26px + env(safe-area-inset-bottom));
+  animation: slide-up 260ms var(--ease);
+}
+@keyframes slide-up {
+  from { transform: translate(-50%, 14px); opacity: 0; }
+  to   { transform: translate(-50%, 0); opacity: 1; }
+}
+
+@media (min-width: 600px) {
+  .sheet {
+    bottom: auto;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: var(--radius-lg);
+    border-bottom: 1px solid var(--line);
+  }
+  @keyframes slide-up {
+    from { transform: translate(-50%, calc(-50% + 12px)); opacity: 0; }
+    to   { transform: translate(-50%, -50%); opacity: 1; }
+  }
+}
+
+.sheet__close { position: absolute; top: 12px; right: 12px; }
+
+.sheet h2 {
+  margin: 0 0 4px;
+  font-size: 1.45rem;
+  font-weight: 800;
+  letter-spacing: -0.028em;
+}
+
+.sheet h3 {
+  margin: 22px 0 10px;
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.sheet p { margin: 0 0 10px; font-size: 0.92rem; line-height: 1.55; color: var(--text-dim); }
+.sheet strong { color: var(--text); font-weight: 700; }
+
+/* answer reveal */
+
+.answer { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+
+.answer li {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface);
+  border-radius: 10px;
+  font-size: 0.92rem;
+}
+.answer li span:first-child { color: var(--text-faint); font-weight: 700; font-variant-numeric: tabular-nums; }
+.answer li b { font-weight: 600; }
+.answer li em {
+  font-style: normal;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.86rem;
+  text-align: right;
+}
+.answer li i {
+  grid-column: 2 / -1;
+  font-style: normal;
+  font-size: 0.76rem;
+  color: var(--text-faint);
+}
+
+.fact {
+  margin: 14px 0 0;
+  padding: 13px 15px;
+  background: var(--surface);
+  border-left: 3px solid var(--exact);
+  border-radius: 0 10px 10px 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.source { margin-top: 10px; font-size: 0.74rem; color: var(--text-faint); }
+
+/* stats */
+
+.statgrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.statgrid div { text-align: center; }
+.statgrid b {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.statgrid span { font-size: 0.68rem; color: var(--text-faint); line-height: 1.25; display: block; }
+
+.dist { display: flex; flex-direction: column; gap: 4px; }
+.dist__row { display: grid; grid-template-columns: 14px 1fr; gap: 8px; align-items: center; font-size: 0.8rem; }
+.dist__bar {
+  background: var(--far);
+  color: var(--far-ink);
+  border-radius: 4px;
+  padding: 2px 7px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  min-width: 26px;
+  transition: width 400ms var(--ease);
+}
+.dist__bar.is-current { background: var(--exact); color: var(--exact-ink); }
+
+.percentile {
+  margin: 14px 0 0;
+  padding: 12px 15px;
+  background: var(--surface);
+  border-radius: 10px;
+  font-size: 0.9rem;
+  color: var(--text);
+  text-align: center;
+}
+.percentile b { font-weight: 800; }
+
+.countdown {
+  text-align: center;
+  margin: 20px 0 16px;
+}
+.countdown span { display: block; font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 4px; }
+.countdown b { font-size: 1.7rem; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+
+/* how-to-play */
+
+.demo { display: flex; flex-direction: column; gap: 5px; margin: 10px 0 14px; }
+.demo__row {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  background: var(--surface);
+}
+.demo__row span { color: var(--text-faint); font-weight: 700; }
+.demo__row.is-exact { background: var(--exact); color: var(--exact-ink); }
+.demo__row.is-exact span { color: var(--exact-ink); opacity: 0.6; }
+.demo__row.is-near { background: var(--near); color: var(--near-ink); }
+.demo__row.is-near span { color: var(--near-ink); opacity: 0.6; }
+.demo__row.is-far { background: var(--far); color: var(--far-ink); }
+.demo__row.is-far span { color: var(--far-ink); opacity: 0.6; }
+
+.rules { margin: 0; padding-left: 18px; }
+.rules li { font-size: 0.9rem; line-height: 1.6; color: var(--text-dim); margin-bottom: 6px; }
+.rules b { color: var(--text); }
+
+/* ---------- toast ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(122px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 12px);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 0.87rem;
+  font-weight: 700;
+  padding: 10px 18px;
+  border-radius: 10px;
+  z-index: 60;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms var(--ease), transform 180ms var(--ease);
+}
+.toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- motion preferences ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Tiny phones: give the board room rather than letting it scroll. */
+@media (max-height: 700px) {
+  :root { --row-h: 50px; --gap: 6px; }
+  .prompt__text { font-size: 1.16rem; }
+}

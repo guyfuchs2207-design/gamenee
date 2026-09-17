@@ -1,0 +1,12 @@
+{
+  "name": "Rankle",
+  "short_name": "Rankle",
+  "description": "A daily ranking puzzle. Six things, one hidden order, four tries.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1116",
+  "theme_color": "#0f1116",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

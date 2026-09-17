@@ -1,0 +1,18 @@
+name = "rankle"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# Serves everything in public/ straight from the edge; the Worker only sees
+# requests that do not match a file, which in practice means /api/*.
+[assets]
+directory = "../public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rankle"
+# Fill in after `npx wrangler d1 create rankle`.
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+# Set the salt as a secret, not here:
+#   npx wrangler secret put HASH_SALT
