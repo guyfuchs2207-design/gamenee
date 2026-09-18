@@ -127,6 +127,23 @@ people than sharks?"; the frustration is two items nobody could separate. Spread
 the magnitudes out — with one attempt and exact-only scoring, a puzzle with two
 near-identical values is just a coin flip.
 
+### Growing the library
+
+Hand-authoring does not scale past a launch — 365 puzzles a year is 2,190
+verified facts. `pipeline/` harvests ranked tables from structured sources
+(Wikidata, Our World in Data), scores candidate six-item sets for
+recognisability, separation and surprise, and hands a human a ranked review
+queue instead of a blank page.
+
+```bash
+npm run pipeline:harvest && npm run pipeline:enrich
+npm run pipeline:build && npm run pipeline:review
+```
+
+Because a puzzle is six rows from **one** table, every item shares a unit, a
+vintage and a citation — which makes the cross-source ordering mistakes
+described below impossible by construction. See `pipeline/README.md`.
+
 ### On the numbers
 
 The 60 shipped puzzles were authored from the sources cited on each one and are

@@ -9,9 +9,18 @@
     "validate": "node scripts/validate-puzzles.mjs",
     "test": "npm run validate && node --test tests/*.test.mjs",
     "dev": "node scripts/serve.mjs",
-    "deploy": "npm run build && cd worker && npx wrangler deploy"
+    "deploy": "npm run build && cd worker && npx wrangler deploy",
+    "pipeline": "node pipeline/cli.mjs",
+    "pipeline:harvest": "node pipeline/cli.mjs harvest",
+    "pipeline:enrich": "node pipeline/cli.mjs enrich",
+    "pipeline:build": "node pipeline/cli.mjs build",
+    "pipeline:review": "node pipeline/cli.mjs review",
+    "pipeline:approve": "node pipeline/cli.mjs approve"
   },
   "engines": {
     "node": ">=20"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.70.0"
   }
 }
