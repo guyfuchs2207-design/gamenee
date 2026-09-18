@@ -47,4 +47,4 @@ http
       res.writeHead(404).end("Not found");
     }
   })
-  .listen(PORT, () => console.log(`Rankle dev server → http://localhost:${PORT}`));
+  .listen(PORT, () => console.log(`Orders dev server → http://localhost:${PORT}`));

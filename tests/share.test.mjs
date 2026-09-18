@@ -1,40 +1,42 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildShareText, marksToRow } from "../public/src/share.js";
-import { gradeGuess, MAX_TRIES } from "../public/src/engine.js";
+import { gradeOrder, scoreOrder } from "../public/src/engine.js";
 import puzzles from "../data/puzzles.mjs";
 
-const row = (order) => ({ order, marks: gradeGuess(order) });
+const card = (order, number = 12) =>
+  buildShareText({ number, marks: gradeOrder(order), score: scoreOrder(order), url: "" });
 
-test("marks render as squares, with a dark-mode variant for the misses", () => {
-  const marks = gradeGuess([1, 0, 5, 3, 4, 2]);
-  assert.equal(marksToRow(marks), "🟨🟨⬜🟩🟩⬜");
-  assert.equal(marksToRow(marks, true), "🟨🟨⬛🟩🟩⬛");
+test("marks render as a single row of six squares", () => {
+  assert.equal(marksToRow(gradeOrder([1, 0, 2, 3, 4, 5])), "⬜⬜🟩🟩🟩🟩");
+  assert.equal(marksToRow(gradeOrder([0, 1, 2, 3, 4, 5])), "🟩🟩🟩🟩🟩🟩");
 });
 
-test("a win is scored out of the try limit", () => {
-  const text = buildShareText({
-    number: 12,
-    rows: [row([1, 0, 2, 3, 4, 5]), row([0, 1, 2, 3, 4, 5])],
-    won: true,
-  });
-  assert.match(text, /^Rankle #12 2\/4$/m);
-  assert.match(text, /🟩🟩🟩🟩🟩🟩/);
+test("the card states the score out of six", () => {
+  assert.match(card([1, 0, 2, 3, 4, 5]), /^Orders #12 — 4\/6 in place$/m);
 });
 
-test("a loss is scored X out of the try limit", () => {
-  const rows = Array.from({ length: MAX_TRIES }, () => row([5, 4, 3, 2, 1, 0]));
-  assert.match(buildShareText({ number: 3, rows, won: false }), /^Rankle #3 X\/4$/m);
+test("a perfect order gets its own headline rather than 6/6", () => {
+  const text = card([0, 1, 2, 3, 4, 5]);
+  assert.match(text, /^Orders #12 — perfect order$/m);
+  assert.ok(!text.includes("6/6"));
 });
 
-test("the share card never names an item, a metric or a value", () => {
-  // The whole point of the grid is that it spoils nothing for the next player.
+test("a shutout still produces a shareable card", () => {
+  assert.match(card([5, 0, 1, 2, 3, 4]), /0\/6 in place/);
+});
+
+test("there is exactly one row of squares — this is a one-attempt game", () => {
+  const rows = card([1, 0, 2, 3, 4, 5]).split("\n").filter((l) => /[🟩⬜]/.test(l));
+  assert.equal(rows.length, 1);
+  assert.equal([...rows[0]].length, 6);
+});
+
+test("the card never names an item, a metric or a value", () => {
+  // The whole point is that posting a result spoils nothing for the next player.
   const puzzle = puzzles[0];
   const text = buildShareText({
-    number: 1,
-    rows: [row([0, 1, 2, 3, 4, 5])],
-    won: true,
-    url: "https://rankle.gg",
+    number: 1, marks: gradeOrder([0, 1, 2, 3, 4, 5]), score: 6, url: "https://orders.game",
   });
   for (const item of puzzle.items) {
     assert.ok(!text.includes(item.label), `leaked "${item.label}"`);
@@ -44,15 +46,7 @@ test("the share card never names an item, a metric or a value", () => {
 });
 
 test("the link is included when set and omitted when not", () => {
-  const rows = [row([0, 1, 2, 3, 4, 5])];
-  assert.ok(buildShareText({ number: 1, rows, won: true, url: "https://rankle.gg" }).endsWith("https://rankle.gg"));
-  assert.ok(buildShareText({ number: 1, rows, won: true, url: "" }).trim().endsWith("🟩"));
-});
-
-test("every grid row is exactly six squares", () => {
-  const rows = [row([2, 1, 0, 5, 4, 3]), row([0, 1, 2, 3, 4, 5])];
-  const text = buildShareText({ number: 9, rows, won: true });
-  for (const line of text.split("\n").filter((l) => /[🟩🟨⬜⬛]/.test(l))) {
-    assert.equal([...line].length, 6, `"${line}" is not six squares`);
-  }
+  const marks = gradeOrder([0, 1, 2, 3, 4, 5]);
+  assert.ok(buildShareText({ number: 1, marks, score: 6, url: "https://orders.game" }).endsWith("https://orders.game"));
+  assert.ok(buildShareText({ number: 1, marks, score: 6, url: "" }).trim().endsWith("🟩"));
 });

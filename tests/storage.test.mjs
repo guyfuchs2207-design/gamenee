@@ -15,68 +15,91 @@ function installStorage({ fail = false } = {}) {
 }
 
 installStorage();
-const { loadStats, recordResult, loadProgress, saveProgress, resetEverything, emptyStats } =
-  await import("../public/src/storage.js");
+const {
+  loadPlays, getPlay, recordPlay, loadDraft, saveDraft, clearDraft,
+  computeStats, resetEverything,
+} = await import("../public/src/storage.js");
 
-test("a fresh player starts at zero", () => {
-  const s = loadStats();
+test("a fresh player has no plays and an empty record", () => {
+  resetEverything();
+  assert.deepEqual(loadPlays(), {});
+  const s = computeStats(7);
   assert.equal(s.played, 0);
-  assert.equal(s.currentStreak, 0);
-  assert.deepEqual(s.distribution, { 1: 0, 2: 0, 3: 0, 4: 0, fail: 0 });
+  assert.equal(s.average, 0);
+  assert.equal(s.streak, 0);
 });
 
-test("consecutive wins build a streak and record the try count", () => {
+test("a play is recorded once and is then immutable", () => {
   resetEverything();
-  recordResult({ number: 10, won: true, tries: 3 });
-  const s = recordResult({ number: 11, won: true, tries: 1 });
-  assert.equal(s.played, 2);
-  assert.equal(s.wins, 2);
-  assert.equal(s.currentStreak, 2);
-  assert.equal(s.maxStreak, 2);
-  assert.equal(s.distribution[3], 1);
-  assert.equal(s.distribution[1], 1);
+  const first = recordPlay({ number: 5, score: 4, order: [1, 0, 2, 3, 4, 5] });
+  assert.equal(first.score, 4);
+  // Replaying an archive entry must not rewrite history or inflate an average.
+  const again = recordPlay({ number: 5, score: 6, order: [0, 1, 2, 3, 4, 5] });
+  assert.equal(again.score, 4, "the original result stands");
+  assert.equal(getPlay(5).score, 4);
 });
 
-test("a loss breaks the streak but keeps the record", () => {
+test("the stored order is a copy, not a live reference", () => {
   resetEverything();
-  recordResult({ number: 1, won: true, tries: 2 });
-  recordResult({ number: 2, won: true, tries: 2 });
-  const s = recordResult({ number: 3, won: false, tries: 4 });
-  assert.equal(s.currentStreak, 0);
-  assert.equal(s.maxStreak, 2);
-  assert.equal(s.distribution.fail, 1);
+  const order = [1, 0, 2, 3, 4, 5];
+  recordPlay({ number: 2, score: 4, order });
+  order[0] = 99; // mutate the caller's array afterwards
+  assert.deepEqual(getPlay(2).order, [1, 0, 2, 3, 4, 5]);
 });
 
-test("skipping a day resets the streak to one rather than continuing it", () => {
+test("the record averages across every play", () => {
   resetEverything();
-  recordResult({ number: 1, won: true, tries: 2 });
-  const s = recordResult({ number: 5, won: true, tries: 2 });
-  assert.equal(s.currentStreak, 1, "puzzle 5 does not follow puzzle 1");
-  assert.equal(s.maxStreak, 1);
+  recordPlay({ number: 1, score: 6, order: [0, 1, 2, 3, 4, 5] });
+  recordPlay({ number: 2, score: 2, order: [0, 1, 3, 2, 5, 4] });
+  recordPlay({ number: 3, score: 4, order: [1, 0, 2, 3, 4, 5] });
+  const s = computeStats(3);
+  assert.equal(s.played, 3);
+  assert.equal(s.average, 4);
+  assert.equal(s.best, 6);
+  assert.equal(s.perfect, 1);
 });
 
-test("re-recording the same puzzle cannot inflate a streak", () => {
+test("the day streak counts consecutive days up to today", () => {
   resetEverything();
-  recordResult({ number: 7, won: true, tries: 1 });
-  const before = loadStats();
-  recordResult({ number: 7, won: true, tries: 1 });
-  recordResult({ number: 7, won: true, tries: 1 });
-  const after = loadStats();
-  assert.deepEqual(after, before, "a refresh on a finished board changes nothing");
+  for (const n of [5, 6, 7]) recordPlay({ number: n, score: 3, order: [1, 0, 2, 3, 4, 5] });
+  assert.equal(computeStats(7).streak, 3);
 });
 
-test("progress only comes back for the day it was saved on", () => {
-  saveProgress({ dateKey: "2026-09-17", number: 1, order: [1, 0, 2, 3, 4, 5], rows: [], status: "playing" });
-  assert.equal(loadProgress("2026-09-17").number, 1);
-  assert.equal(loadProgress("2026-09-18"), null, "yesterday's board must not leak into today");
+test("an unplayed today does not break the streak — the day is not over", () => {
+  resetEverything();
+  for (const n of [5, 6]) recordPlay({ number: n, score: 3, order: [1, 0, 2, 3, 4, 5] });
+  assert.equal(computeStats(7).streak, 2, "yesterday still anchors it");
+  assert.equal(computeStats(8).streak, 0, "but skipping a whole day does break it");
 });
 
-test("stats survive a storage backend that throws on every call", async () => {
-  // Re-import with a hostile storage so the module-level fallback is exercised.
+test("a gap breaks the streak without erasing the plays", () => {
+  resetEverything();
+  for (const n of [1, 2, 3, 6, 7]) recordPlay({ number: n, score: 3, order: [1, 0, 2, 3, 4, 5] });
+  const s = computeStats(7);
+  assert.equal(s.streak, 2, "only 6 and 7 are consecutive");
+  assert.equal(s.played, 5);
+});
+
+test("drafts are kept per puzzle and cleared once it is played", () => {
+  resetEverything();
+  saveDraft(4, [2, 1, 0, 3, 4, 5]);
+  saveDraft(9, [5, 4, 3, 2, 1, 0]);
+  assert.deepEqual(loadDraft(4), [2, 1, 0, 3, 4, 5]);
+  assert.deepEqual(loadDraft(9), [5, 4, 3, 2, 1, 0]);
+  assert.equal(loadDraft(3), null, "an untouched puzzle has no draft");
+
+  recordPlay({ number: 4, score: 0, order: [2, 1, 0, 3, 4, 5] });
+  assert.equal(loadDraft(4), null, "playing clears the draft");
+  assert.deepEqual(loadDraft(9), [5, 4, 3, 2, 1, 0], "other drafts survive");
+
+  clearDraft(9);
+  assert.equal(loadDraft(9), null);
+});
+
+test("the record survives a storage backend that throws on every call", async () => {
   installStorage({ fail: true });
   const mod = await import(`../public/src/storage.js?hostile=${Date.now()}`);
-  assert.doesNotThrow(() => mod.loadStats());
-  const s = mod.recordResult({ number: 3, won: true, tries: 2 });
-  assert.equal(s.wins, 1, "in-memory fallback still tracks the session");
-  assert.equal(mod.loadStats().wins, 1);
+  assert.doesNotThrow(() => mod.loadPlays());
+  mod.recordPlay({ number: 3, score: 6, order: [0, 1, 2, 3, 4, 5] });
+  assert.equal(mod.computeStats(3).played, 1, "in-memory fallback still tracks the session");
 });

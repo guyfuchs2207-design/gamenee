@@ -3,20 +3,20 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Rankle — Six things. One hidden order.</title>
-<meta name="description" content="A daily ranking puzzle. Six things, one hidden order, four tries. New puzzle every day." />
-<meta name="theme-color" content="#0f1116" />
+<title>Orders — Six things. One order. One shot.</title>
+<meta name="description" content="A daily ranking puzzle. Put six things in order. You get one attempt, then you find out the real numbers." />
+<meta name="theme-color" content="#FFF6E9" />
 
 <!-- Link previews are half the share loop; a bare URL in a group chat converts far worse. -->
 <meta property="og:type" content="website" />
-<meta property="og:title" content="Rankle — Six things. One hidden order." />
-<meta property="og:description" content="A daily ranking puzzle. Four tries. New one every day." />
-<meta property="og:url" content="https://rankle.gg" />
+<meta property="og:title" content="Orders — Six things. One order. One shot." />
+<meta property="og:description" content="Put six things in order. One attempt a day, then the real numbers." />
+<meta property="og:url" content="https://orders.game" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Rankle — Six things. One hidden order." />
-<meta name="twitter:description" content="A daily ranking puzzle. Four tries. New one every day." />
+<meta name="twitter:title" content="Orders — Six things. One order. One shot." />
+<meta name="twitter:description" content="Put six things in order. One attempt a day, then the real numbers." />
 
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f1116'/><rect x='7' y='7' width='18' height='4' rx='2' fill='%2354d98c'/><rect x='7' y='14' width='18' height='4' rx='2' fill='%23f2c14e'/><rect x='7' y='21' width='18' height='4' rx='2' fill='%233a4051'/></svg>" />
+<link rel="icon" href="./icon.svg" />
 <link rel="manifest" href="./manifest.webmanifest" />
 <link rel="apple-touch-icon" href="./icon.svg" />
 <link rel="stylesheet" href="./styles.css" />
@@ -28,35 +28,43 @@
     <button class="icon-btn" data-open="help" aria-label="How to play">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.2"/><path d="M9.3 9.2a2.8 2.8 0 1 1 3.4 2.8v1.7"/><circle cx="12" cy="17.2" r="1.05" class="solid"/></svg>
     </button>
-    <h1 class="wordmark">Rankle</h1>
-    <button class="icon-btn" data-open="stats" aria-label="Statistics">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V12M12 20V5M19 20v-5"/></svg>
-    </button>
+    <h1 class="wordmark">Orders</h1>
+    <div class="topbar__right">
+      <button class="icon-btn" data-open="archive" aria-label="Past puzzles">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 9.6h17M8.4 3.2v3.4M15.6 3.2v3.4"/></svg>
+      </button>
+      <button class="icon-btn" data-open="stats" aria-label="Your record">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V12M12 20V5M19 20v-5"/></svg>
+      </button>
+    </div>
   </header>
 
   <main class="main">
+    <div class="rewind" id="rewind" hidden>
+      <span id="rewind-label"></span>
+      <button class="rewind__back" data-today>Back to today</button>
+    </div>
+
     <section class="prompt" aria-live="polite">
-      <p class="prompt__eyebrow"><span id="puzzle-no">Rankle</span> · <span id="tries-left"></span></p>
-      <h2 class="prompt__text" id="prompt-text">Loading today's puzzle…</h2>
+      <p class="prompt__eyebrow"><span id="puzzle-no"></span></p>
+      <h2 class="prompt__text" id="prompt-text">Loading…</h2>
       <p class="prompt__hint"><span id="prompt-hint"></span></p>
     </section>
 
-    <ol class="board" id="board" aria-label="Your ranking. Drag rows, or focus a row and press Space then the arrow keys."></ol>
-
-    <div class="history" id="history" aria-label="Previous guesses"></div>
+    <ol class="board" id="board" aria-label="Your order. Drag rows, or focus a row and press Space then the arrow keys."></ol>
 
     <div class="actions">
-      <button class="btn btn--primary" id="submit" disabled>Submit ranking</button>
+      <button class="btn btn--primary" id="submit" disabled>Lock in my order</button>
+      <p class="oneshot" id="oneshot">One attempt. No takebacks.</p>
     </div>
   </main>
 
   <p class="footnote" id="footnote"></p>
 </div>
 
-<!-- Result / reveal sheet -->
 <div class="scrim" id="scrim" hidden></div>
 
-<section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden>
+<section class="sheet" id="sheet" role="dialog" aria-modal="true" hidden>
   <button class="sheet__close icon-btn" data-close aria-label="Close">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
   </button>

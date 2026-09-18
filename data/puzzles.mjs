@@ -1,5 +1,5 @@
 /**
- * Rankle puzzle library.
+ * Orders puzzle library.
  *
  * `items` are stored IN THE CORRECT ANSWER ORDER — index 0 is rank #1.
  * `hint` tells the player what "rank #1" means for this metric.

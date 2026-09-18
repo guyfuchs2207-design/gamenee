@@ -1,9 +1,9 @@
 {
-  "name": "rankle",
+  "name": "orders",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A daily ranking puzzle. Six things, one hidden order, four tries.",
+  "description": "A daily ranking puzzle. Six things, one order, one attempt.",
   "scripts": {
     "build": "node scripts/build-pack.mjs",
     "validate": "node scripts/validate-puzzles.mjs",
@@ -11,5 +11,7 @@
     "dev": "node scripts/serve.mjs",
     "deploy": "npm run build && cd worker && npx wrangler deploy"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

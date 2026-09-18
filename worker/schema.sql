@@ -1,11 +1,11 @@
--- Rankle stats store (Cloudflare D1 / SQLite).
--- Apply with:  npx wrangler d1 execute rankle --remote --file=./schema.sql
+-- Orders stats store (Cloudflare D1 / SQLite).
+-- Apply with:  npx wrangler d1 execute orders --remote --file=./schema.sql
 
 -- Aggregate counts only. There is no per-player row and no identifier that
 -- survives the request, so there is nothing here to leak.
 CREATE TABLE IF NOT EXISTS results (
   puzzle_number INTEGER NOT NULL,
-  bucket        TEXT    NOT NULL,  -- '1' | '2' | '3' | '4' | 'fail'
+  bucket        TEXT    NOT NULL,  -- '0'..'6' — items placed correctly
   count         INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (puzzle_number, bucket)
 );

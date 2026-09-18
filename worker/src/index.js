@@ -1,20 +1,21 @@
 /**
- * Rankle backend — Cloudflare Worker + D1.
+ * Orders backend — Cloudflare Worker + D1.
  *
  * Two jobs:
- *   1. Serve exactly one day's puzzle, so the full answer set is not sitting
- *      in every visitor's bundle.
- *   2. Aggregate anonymous results into a daily distribution.
+ *   1. Serve puzzles that have already been released, so the full answer set
+ *      is not sitting in every visitor's bundle.
+ *   2. Aggregate anonymous scores into a per-puzzle summary.
  *
  * Static assets are served by the [assets] binding; anything under /api/
  * lands here. The front end treats every endpoint as optional — see
  * public/src/api.js — so an outage degrades to offline play, not a blank page.
  */
 import puzzles from "../../data/puzzles.mjs";
-import { selectPuzzle, MAX_TRIES } from "../../public/src/engine.js";
+import { selectPuzzle, puzzleNumber, ITEMS_PER_PUZZLE } from "../../public/src/engine.js";
 
-const BUCKETS = ["1", "2", "3", "4", "fail"];
-const SUBMISSION_RETENTION_DAYS = 30;
+/** Scores run 0..6. Five is unreachable — one item out of place forces a second. */
+const BUCKETS = Array.from({ length: ITEMS_PER_PUZZLE + 1 }, (_, i) => String(i));
+const SUBMISSION_RETENTION_DAYS = 60;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -35,14 +36,13 @@ export default {
 
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     if (!url.pathname.startsWith("/api/")) {
-      // Not an API route and not a static asset — let the platform 404 it.
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
     }
 
     try {
       switch (url.pathname) {
-        case "/api/daily":
-          return handleDaily(url);
+        case "/api/puzzle":
+          return handlePuzzle(url);
         case "/api/stats":
           return handleStats(url, env);
         case "/api/result":
@@ -61,13 +61,19 @@ export default {
 
 // ---------------------------------------------------------------- routes
 
-/** Today's puzzle only. Asking for another number still returns that day's. */
-function handleDaily(url) {
+/**
+ * Serve a released puzzle.
+ *
+ * The server clamps to its own clock rather than trusting the client's, so a
+ * device with its date set forward cannot pull tomorrow's answers.
+ */
+function handlePuzzle(url) {
   const number = parseNumber(url.searchParams.get("n"));
   if (number == null) return json({ error: "bad_number" }, 400);
-  const puzzle = selectPuzzle(puzzles, number);
+  if (number > puzzleNumber()) return json({ error: "not_released" }, 403);
+
   return json(
-    { number, puzzle },
+    { number, puzzle: selectPuzzle(puzzles, number) },
     200,
     // Safe to cache: puzzle N is immutable once chosen.
     { "Cache-Control": "public, max-age=3600" }
@@ -78,8 +84,7 @@ async function handleStats(url, env) {
   const number = parseNumber(url.searchParams.get("n"));
   if (number == null) return json({ error: "bad_number" }, 400);
   if (!env.DB) return json({ error: "no_database" }, 503);
-  const distribution = await readDistribution(env, number);
-  return json({ number, ...summarise(distribution) });
+  return json({ number, ...summarise(await readCounts(env, number)) });
 }
 
 async function handleResult(request, env, ctx) {
@@ -93,15 +98,14 @@ async function handleResult(request, env, ctx) {
   }
 
   const number = parseNumber(body?.number);
-  const won = body?.won === true;
-  const tries = Number(body?.tries);
+  const score = Number(body?.score);
 
   if (number == null) return json({ error: "bad_number" }, 400);
-  if (!Number.isInteger(tries) || tries < 1 || tries > MAX_TRIES) {
-    return json({ error: "bad_tries" }, 400);
+  if (number > puzzleNumber()) return json({ error: "not_released" }, 403);
+  if (!Number.isInteger(score) || score < 0 || score > ITEMS_PER_PUZZLE) {
+    return json({ error: "bad_score" }, 400);
   }
 
-  const bucket = won ? String(tries) : "fail";
   const clientHash = await hashClient(request, env);
 
   // INSERT OR IGNORE is the whole rate limit: the primary key rejects a repeat
@@ -112,26 +116,21 @@ async function handleResult(request, env, ctx) {
     .bind(number, clientHash, Date.now())
     .run();
 
-  const isFirstSubmission = (claim.meta?.changes ?? 0) > 0;
+  const counted = (claim.meta?.changes ?? 0) > 0;
 
-  if (isFirstSubmission) {
+  if (counted) {
     await env.DB.prepare(
       `INSERT INTO results (puzzle_number, bucket, count) VALUES (?, ?, 1)
        ON CONFLICT(puzzle_number, bucket) DO UPDATE SET count = count + 1`
     )
-      .bind(number, bucket)
+      .bind(number, String(score))
       .run();
 
     // Housekeeping runs after the response is already on its way out.
     ctx.waitUntil(pruneSubmissions(env));
   }
 
-  const distribution = await readDistribution(env, number);
-  return json({
-    number,
-    counted: isFirstSubmission,
-    ...summarise(distribution, { won, tries }),
-  });
+  return json({ number, counted, ...summarise(await readCounts(env, number), score) });
 }
 
 // ---------------------------------------------------------------- helpers
@@ -142,45 +141,42 @@ function parseNumber(raw) {
   return Number.isInteger(n) && n >= 1 && n <= 100000 ? n : null;
 }
 
-async function readDistribution(env, number) {
+async function readCounts(env, number) {
   const { results } = await env.DB.prepare(
     "SELECT bucket, count FROM results WHERE puzzle_number = ?"
   )
     .bind(number)
     .all();
 
-  const dist = Object.fromEntries(BUCKETS.map((b) => [b, 0]));
+  const counts = Object.fromEntries(BUCKETS.map((b) => [b, 0]));
   for (const row of results ?? []) {
-    if (row.bucket in dist) dist[row.bucket] = row.count;
+    if (row.bucket in counts) counts[row.bucket] = row.count;
   }
-  return dist;
+  return counts;
 }
 
 /**
- * Turn raw counts into what the sheet displays.
+ * Turn raw counts into the one line the reveal shows.
  *
- * `percentile` is the share of players this result strictly beat — fewer tries
- * beats more tries, and any win beats a failure. Ties are excluded on purpose:
- * "beat 100%" should mean nobody did better *or equal*, which is the honest
- * reading when a player solves it in one.
+ * `percentile` is the share of players this score strictly beat. Ties are
+ * excluded on purpose: "beat 100%" should mean nobody did better *or equal*,
+ * which is the honest reading when someone nails a perfect order.
  */
-export function summarise(distribution, outcome = null) {
-  const total = BUCKETS.reduce((sum, b) => sum + distribution[b], 0);
-  const solved = total - distribution.fail;
+export function summarise(counts, score = null) {
+  const total = BUCKETS.reduce((sum, b) => sum + counts[b], 0);
+  const points = BUCKETS.reduce((sum, b) => sum + counts[b] * Number(b), 0);
+
   const payload = {
-    distribution,
     total,
-    solvedRate: total ? solved / total : 0,
+    averageScore: total ? points / total : 0,
+    perfectRate: total ? counts[String(ITEMS_PER_PUZZLE)] / total : 0,
   };
 
-  if (!outcome || !total) return { ...payload, percentile: 0 };
+  if (score == null || !total) return { ...payload, percentile: 0 };
 
   let beaten = 0;
-  if (outcome.won) {
-    for (const b of ["1", "2", "3", "4"]) {
-      if (Number(b) > outcome.tries) beaten += distribution[b];
-    }
-    beaten += distribution.fail;
+  for (const b of BUCKETS) {
+    if (Number(b) < score) beaten += counts[b];
   }
   return { ...payload, percentile: (beaten / total) * 100 };
 }
@@ -196,7 +192,7 @@ async function hashClient(request, env) {
     request.headers.get("CF-Connecting-IP") ||
     request.headers.get("X-Forwarded-For") ||
     "unknown";
-  const salt = env.HASH_SALT || "rankle-dev-salt";
+  const salt = env.HASH_SALT || "orders-dev-salt";
   const data = new TextEncoder().encode(`${salt}:${ip}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(digest)]
@@ -205,7 +201,7 @@ async function hashClient(request, env) {
     .join("");
 }
 
-/** Drop dedup rows once the puzzle they guard is long past. */
+/** Drop dedup rows once the puzzle they guard has fallen out of the archive. */
 async function pruneSubmissions(env) {
   const cutoff = Date.now() - SUBMISSION_RETENTION_DAYS * 86400000;
   try {

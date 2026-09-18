@@ -1,10 +1,10 @@
 /** Deployment-level knobs. Everything a rebrand or a re-host needs to touch. */
 
-export const GAME_NAME = "Rankle";
-export const GAME_TAGLINE = "Six things. One hidden order.";
+export const GAME_NAME = "Orders";
+export const GAME_TAGLINE = "Six things. One order. One shot.";
 
 /** Appended to the share card. Leave empty to share without a link. */
-export const SHARE_URL = "https://rankle.gg";
+export const SHARE_URL = "https://orders.game";
 
 /**
  * Stats backend origin. Empty string means same-origin (`/api/...`), which is

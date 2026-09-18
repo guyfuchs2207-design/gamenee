@@ -1,39 +1,39 @@
 /**
- * Rankle — app controller.
+ * Orders — app controller.
  *
- * Owns the day's state, renders it, and mediates between the drag list, the
- * engine and persistence. The board is small enough (6 rows) that a full
- * re-render on every change is cheaper than diffing, and far easier to reason
- * about — but never while a drag is in flight.
+ * Owns the currently-viewed puzzle (today's, or one pulled from the archive),
+ * renders it, and mediates between the drag list, the engine and persistence.
+ * The board is six rows, so a full re-render on every change is cheaper than
+ * diffing and far easier to reason about — but never while a drag is in flight.
  */
 import {
-  MAX_TRIES, EXACT, NEAR,
-  puzzleNumber, localDateKey, selectPuzzle, openingOrder,
-  gradeGuess, isSolved, exactCount,
+  ITEMS_PER_PUZZLE, ARCHIVE_DAYS,
+  puzzleNumber, dateForNumber, selectPuzzle, openingOrder, archiveNumbers, isPlayable,
+  gradeOrder, scoreOrder, isPerfect, placementsByTrueRank,
 } from "./engine.js";
 import { GAME_NAME, GAME_TAGLINE, SHARE_URL } from "./config.js";
 import { loadLocalPuzzles } from "./pack.js";
 import { createDragList } from "./dragList.js";
-import { loadStats, recordResult, loadProgress, saveProgress, resetEverything } from "./storage.js";
+import {
+  getPlay, recordPlay, loadPlays, loadDraft, saveDraft, computeStats, resetEverything,
+} from "./storage.js";
 import { buildShareText, shareResult, marksToRow } from "./share.js";
-import { fetchDaily, submitResult, fetchStats } from "./api.js";
+import { fetchPuzzle, submitScore, fetchStats } from "./api.js";
 
-const REVEAL_STAGGER_MS = 95;
-const REVEAL_TOTAL_MS = 480;
-const SEEN_HELP_KEY = "rankle.seenHelp.v1";
+const REVEAL_STAGGER_MS = 100;
+const REVEAL_TOTAL_MS = 460;
+const SEEN_HELP_KEY = "orders.seenHelp.v1";
 
 const $ = (id) => document.getElementById(id);
 const el = {
-  board: $("board"), history: $("history"), submit: $("submit"),
-  promptText: $("prompt-text"), promptHint: $("prompt-hint"),
-  puzzleNo: $("puzzle-no"), triesLeft: $("tries-left"),
+  board: $("board"), submit: $("submit"), oneshot: $("oneshot"),
+  promptText: $("prompt-text"), promptHint: $("prompt-hint"), puzzleNo: $("puzzle-no"),
+  rewind: $("rewind"), rewindLabel: $("rewind-label"),
   sheet: $("sheet"), sheetBody: $("sheet-body"), scrim: $("scrim"),
   toast: $("toast"), footnote: $("footnote"),
 };
 
-/** @type {{number:number, dateKey:string, puzzle:object, order:number[], rows:{order:number[],marks:number[]}[], status:"playing"|"won"|"lost", marks:number[]|null}} */
-let state;
-let dragList;
+let state = null;
 let busy = false; // true during the reveal animation — blocks input
 let countdownTimer;
 
@@ -43,147 +43,132 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
 // ---------------------------------------------------------------- boot
 
 async function boot() {
-  const number = puzzleNumber();
-  const dateKey = localDateKey();
+  const todayNumber = puzzleNumber();
+  state = { todayNumber, number: todayNumber, puzzle: null, order: [], played: null, marks: null, crowd: null };
 
-  // Prefer the API (serves only today) and fall back to the bundled pack.
-  const fromApi = await fetchDaily(number);
-  const puzzle = fromApi?.puzzle ?? selectPuzzle(loadLocalPuzzles(), number);
-
-  const saved = loadProgress(dateKey);
-  state = {
-    number,
-    dateKey,
-    puzzle,
-    // A saved board is only restored for the same puzzle number; anything
-    // else (a new day, a cleared cache) starts from the shared opening order.
-    order: saved?.number === number ? saved.order : openingOrder(number),
-    rows: saved?.number === number ? saved.rows : [],
-    status: saved?.number === number ? saved.status : "playing",
-    marks: saved?.number === number ? saved.marks : null,
-  };
-
-  dragList = createDragList(el.board, {
+  createDragList(el.board, {
     onReorder: handleReorder,
-    isLocked: () => busy || state.status !== "playing",
+    isLocked: () => busy || !!state.played,
   });
 
   wireChrome();
-  render();
 
-  if (state.status !== "playing") {
-    fetchStats(number).then((global) => {
-      if (!global) return;
-      state.global = global;
-      renderGlobal(global);
-    });
-    openSheet(resultSheet());
-  } else if (!readSeenHelp()) {
-    try { localStorage.setItem(SEEN_HELP_KEY, "1"); } catch { /* private mode */ }
+  const requested = Number(new URLSearchParams(location.search).get("d"));
+  await goTo(isPlayable(requested, todayNumber) ? requested : todayNumber, { replace: true });
+
+  if (!state.played && !readFlag(SEEN_HELP_KEY)) {
+    writeFlag(SEEN_HELP_KEY, "1");
     openSheet(helpSheet());
   }
 }
 
-function readSeenHelp() {
-  try { return localStorage.getItem(SEEN_HELP_KEY); } catch { return null; }
-}
-
 function wireChrome() {
   document.querySelector('[data-open="help"]').addEventListener("click", () => openSheet(helpSheet()));
+  document.querySelector('[data-open="archive"]').addEventListener("click", () => openSheet(archiveSheet()));
   document.querySelector('[data-open="stats"]').addEventListener("click", () => openSheet(statsSheet()));
+  document.querySelector("[data-today]").addEventListener("click", () => goTo(state.todayNumber));
   el.scrim.addEventListener("click", closeSheet);
   el.sheet.querySelector("[data-close]").addEventListener("click", closeSheet);
-  el.submit.addEventListener("click", () => {
-    if (state.status === "playing") submit();
-    else openSheet(resultSheet());
-  });
+  el.submit.addEventListener("click", () => (state.played ? openSheet(resultSheet()) : submit()));
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !el.sheet.hidden) closeSheet();
+  });
+  // Back/forward between archive entries.
+  window.addEventListener("popstate", (e) => {
+    const n = e.state?.number;
+    if (isPlayable(n, state.todayNumber)) goTo(n, { skipHistory: true });
   });
   el.footnote.textContent = `${GAME_TAGLINE} New puzzle daily.`;
 }
 
-// ---------------------------------------------------------------- state
+/** localStorage throws outright in some privacy modes — never at boot. */
+function readFlag(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writeFlag(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* private mode */ }
+}
+
+// ---------------------------------------------------------------- navigation
+
+async function goTo(number, { replace = false, skipHistory = false } = {}) {
+  if (busy) return;
+  closeSheet();
+
+  // The API serves only released puzzles; the pack is the offline fallback.
+  const fromApi = await fetchPuzzle(number);
+  const puzzle = fromApi?.puzzle ?? selectPuzzle(loadLocalPuzzles(), number);
+  const played = getPlay(number);
+
+  state.number = number;
+  state.puzzle = puzzle;
+  state.played = played;
+  state.crowd = null;
+  state.order = played ? played.order.slice() : (loadDraft(number) ?? openingOrder(number));
+  state.marks = played ? gradeOrder(played.order) : null;
+
+  if (!skipHistory) {
+    const url = number === state.todayNumber ? location.pathname : `?d=${number}`;
+    history[replace ? "replaceState" : "pushState"]({ number }, "", url);
+  }
+
+  render();
+
+  if (played) {
+    fetchStats(number).then((crowd) => {
+      if (!crowd) return;
+      state.crowd = crowd;
+      paintCrowd();
+    });
+  }
+}
+
+// ---------------------------------------------------------------- play
 
 function handleReorder(nextOrder) {
   state.order = nextOrder;
-  // Colours from the previous guess describe an arrangement that no longer
-  // exists, so they are dropped the instant anything moves.
-  state.marks = null;
-  persist();
+  saveDraft(state.number, nextOrder);
   render();
-}
-
-function persist() {
-  saveProgress({
-    dateKey: state.dateKey, number: state.number,
-    order: state.order, rows: state.rows,
-    status: state.status, marks: state.marks,
-  });
 }
 
 async function submit() {
-  if (busy || state.status !== "playing") return;
+  if (busy || state.played) return;
 
-  const marks = gradeGuess(state.order);
-  const solved = isSolved(marks);
-
-  // Guard against burning a try on a board that was already submitted verbatim.
-  if (state.rows.some((r) => r.order.join() === state.order.join())) {
-    toast("You already tried that order");
-    el.board.classList.add("is-shaking");
-    setTimeout(() => el.board.classList.remove("is-shaking"), 520);
-    return;
-  }
+  const marks = gradeOrder(state.order);
+  const score = marks.filter(Boolean).length;
 
   busy = true;
   el.submit.disabled = true;
-  state.rows.push({ order: state.order.slice(), marks });
   state.marks = marks;
 
-  await revealRow(marks);
+  await revealRows(marks);
 
-  if (solved) state.status = "won";
-  else if (state.rows.length >= MAX_TRIES) state.status = "lost";
-
+  state.played = recordPlay({ number: state.number, score, order: state.order });
   busy = false;
-  persist();
   render();
 
-  if (state.status === "playing") {
-    toast(`${exactCount(marks)} of 6 in place`);
-    return;
-  }
-
-  if (state.status === "won") {
+  if (isPerfect(score)) {
     Array.from(el.board.children).forEach((row, i) => {
       setTimeout(() => {
-        row.classList.add("is-winning");
-        setTimeout(() => row.classList.remove("is-winning"), 440);
+        row.classList.add("is-celebrating");
+        setTimeout(() => row.classList.remove("is-celebrating"), 440);
       }, i * 70);
     });
   }
 
-  const stats = recordResult({
-    number: state.number,
-    won: state.status === "won",
-    tries: state.rows.length,
-  });
-
   // The sheet opens on local data and upgrades in place if the API answers —
   // which may be before or after it is on screen, so the result is stored.
-  submitResult({ number: state.number, won: state.status === "won", tries: state.rows.length })
-    .then((global) => {
-      if (!global) return;
-      state.global = global;
-      renderGlobal(global);
-    });
+  submitScore({ number: state.number, score }).then((crowd) => {
+    if (!crowd) return;
+    state.crowd = crowd;
+    paintCrowd();
+  });
 
-  setTimeout(() => openSheet(resultSheet({ stats })), state.status === "won" ? 900 : 600);
+  setTimeout(() => openSheet(resultSheet()), isPerfect(score) ? 900 : 620);
 }
 
-/** Flip the graded rows in sequence so the result reads as an event, not a repaint. */
-function revealRow(marks) {
+/** Flip the rows in sequence so the result reads as an event, not a repaint. */
+function revealRows(marks) {
   return new Promise((resolve) => {
     const rows = Array.from(el.board.children);
     rows.forEach((row, i) => {
@@ -198,56 +183,59 @@ function revealRow(marks) {
   });
 }
 
-function applyMark(row, mark) {
-  row.classList.remove("is-exact", "is-near", "is-far");
-  if (mark === EXACT) row.classList.add("is-exact");
-  else if (mark === NEAR) row.classList.add("is-near");
-  else row.classList.add("is-far");
+function applyMark(row, hit) {
+  row.classList.remove("is-hit", "is-miss");
+  row.classList.add(hit ? "is-hit" : "is-miss");
 }
 
 // ---------------------------------------------------------------- render
 
 function render() {
-  const { puzzle, number, rows, order, marks, status } = state;
+  const { puzzle, number, todayNumber, order, marks, played } = state;
+  if (!puzzle) return;
+
+  const isToday = number === todayNumber;
+  el.rewind.hidden = isToday;
+  if (!isToday) el.rewindLabel.textContent = `Rewind · ${formatDate(dateForNumber(number))}`;
 
   el.puzzleNo.textContent = `${GAME_NAME} #${number}`;
   el.promptText.textContent = puzzle.prompt;
   el.promptHint.textContent = puzzle.hint;
 
-  const left = MAX_TRIES - rows.length;
-  el.triesLeft.textContent =
-    status === "won" ? `Solved in ${rows.length}`
-    : status === "lost" ? "Out of tries"
-    : `${left} ${left === 1 ? "try" : "tries"} left`;
-
-  el.board.classList.toggle("is-locked", status !== "playing");
+  el.board.classList.toggle("is-locked", !!played);
   el.board.innerHTML = "";
 
-  const answerNames = puzzle.items;
   order.forEach((item, slot) => {
     const li = document.createElement("li");
     li.className = "row";
     li.dataset.row = "";
     li.dataset.item = String(item);
-    li.tabIndex = status === "playing" ? 0 : -1;
-    li.setAttribute("aria-label",
-      `Position ${slot + 1} of 6: ${answerNames[item].label}`);
+    li.tabIndex = played ? -1 : 0;
+    li.setAttribute("aria-label", `Position ${slot + 1} of 6: ${puzzle.items[item].label}`);
     li.innerHTML =
       `<span class="row__rank">${slot + 1}</span>` +
-      `<span class="row__label">${esc(answerNames[item].label)}</span>` +
+      `<span class="row__label">${esc(puzzle.items[item].label)}</span>` +
       `<span class="row__grip" aria-hidden="true"><i></i><i></i><i></i></span>`;
     if (marks) applyMark(li, marks[slot]);
     el.board.appendChild(li);
   });
 
-  el.history.innerHTML = rows
-    .map((r) => `<div class="history__row">${r.marks
-      .map((m) => `<span class="pip ${m === EXACT ? "pip--exact" : m === NEAR ? "pip--near" : ""}"></span>`)
-      .join("")}</div>`)
-    .join("");
-
   el.submit.disabled = busy;
-  el.submit.textContent = status === "playing" ? "Submit ranking" : "See results";
+  el.submit.textContent = played ? "See the real order" : "Lock in my order";
+  el.oneshot.textContent = played
+    ? `You scored ${played.score} of ${ITEMS_PER_PUZZLE}.`
+    : "One attempt. No takebacks.";
+}
+
+function formatDate(date) {
+  return date.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+}
+
+/** "Today" / "Yesterday" / a date — what the archive list reads best as. */
+function relativeDay(number, todayNumber) {
+  if (number === todayNumber) return "Today";
+  if (number === todayNumber - 1) return "Yesterday";
+  return formatDate(dateForNumber(number));
 }
 
 // ---------------------------------------------------------------- sheets
@@ -257,6 +245,7 @@ function openSheet(html) {
   el.sheet.hidden = false;
   el.scrim.hidden = false;
   bindSheet();
+  el.sheet.scrollTop = 0;
   el.sheet.querySelector("[data-close]").focus();
 }
 
@@ -268,126 +257,163 @@ function closeSheet() {
 
 function bindSheet() {
   el.sheetBody.querySelector("[data-share]")?.addEventListener("click", onShare);
+  el.sheetBody.querySelector("[data-archive]")?.addEventListener("click", () => openSheet(archiveSheet()));
   el.sheetBody.querySelector("[data-reset]")?.addEventListener("click", () => {
-    if (!confirm("Erase your streak and all statistics? This cannot be undone.")) return;
+    if (!confirm("Erase your record and every past result? This cannot be undone.")) return;
     resetEverything();
     closeSheet();
     location.reload();
   });
+  for (const btn of el.sheetBody.querySelectorAll("[data-goto]")) {
+    btn.addEventListener("click", () => goTo(Number(btn.dataset.goto)));
+  }
   const cd = el.sheetBody.querySelector("[data-countdown]");
   if (cd) startCountdown(cd);
 }
 
 async function onShare() {
-  const text = buildShareText({
-    number: state.number,
-    rows: state.rows,
-    won: state.status === "won",
-    dark: matchMedia("(prefers-color-scheme: dark)").matches,
-    url: SHARE_URL,
-  });
-  const outcome = await shareResult(text);
+  const outcome = await shareResult(
+    buildShareText({
+      number: state.number,
+      marks: state.marks,
+      score: state.played.score,
+      url: SHARE_URL,
+    })
+  );
   if (outcome === "copied") toast("Copied to clipboard");
   else if (outcome === "failed") toast("Couldn't copy — select and copy manually");
 }
 
-function resultSheet({ stats = loadStats() } = {}) {
-  const { puzzle, rows, status, number } = state;
-  const won = status === "won";
-  const heading = won
-    ? ["Nailed it.", "Clean.", "Impressive.", "Got there."][Math.min(rows.length - 1, 3)]
-    : "Not this time.";
-  const sub = won
-    ? `Solved ${GAME_NAME} #${number} in ${rows.length} ${rows.length === 1 ? "try" : "tries"}.`
-    : `The order was tougher than it looked.`;
+function resultSheet() {
+  const { puzzle, number, todayNumber, played, marks } = state;
+  const score = played.score;
+  const perfect = isPerfect(score);
+  const placed = placementsByTrueRank(played.order);
 
-  const grid = rows.map((r) => marksToRow(r.marks, true)).join("<br>");
+  const headline = perfect
+    ? "Perfect order."
+    : score >= 4 ? "Close."
+    : score >= 2 ? "Partly there."
+    : score === 1 ? "One right."
+    : "Nothing landed.";
 
+  // The real order, each row carrying the number behind it and — where the
+  // player was wrong — where they actually put it.
   const answer = puzzle.items
-    .map((item, i) =>
-      `<li><span>${i + 1}</span><b>${esc(item.label)}</b><em>${esc(item.value)}</em>` +
-      (item.note ? `<i>${esc(item.note)}</i>` : "") + `</li>`)
+    .map((item, rank) => {
+      const hit = placed[rank] === rank;
+      return (
+        `<li class="${hit ? "is-hit" : ""}">` +
+        `<span>${rank + 1}</span><b>${esc(item.label)}</b><em>${esc(item.value)}</em>` +
+        (item.note ? `<i>${esc(item.note)}</i>` : "") +
+        (hit ? "" : `<u>you had it ${ordinal(placed[rank] + 1)}</u>`) +
+        `</li>`
+      );
+    })
     .join("");
 
   return `
-    <h2>${heading}</h2>
-    <p>${sub}</p>
-    <div style="font-size:1.1rem;line-height:1.5;letter-spacing:2px;margin:14px 0">${grid}</div>
+    <h2>${headline}</h2>
+    <div class="score ${score === 0 ? "is-zero" : ""}">
+      <b>${score}</b><span>of ${ITEMS_PER_PUZZLE} in the right place</span>
+    </div>
+    <div class="scorerow">${marks.map((h) => `<i class="${h ? "is-hit" : ""}"></i>`).join("")}</div>
 
     <h3>The real order — ${esc(puzzle.prompt.toLowerCase())}</h3>
     <ol class="answer">${answer}</ol>
     <p class="fact">${esc(puzzle.fact)}</p>
     <p class="source">Source: ${esc(puzzle.source)}</p>
 
-    <div id="global-slot">${state.global ? globalLine(state.global) : ""}</div>
+    <div id="crowd-slot">${crowdLine()}</div>
 
-    ${statsBlock(stats)}
+    ${recordBlock()}
 
-    <div class="countdown"><span>Next puzzle in</span><b data-countdown>--:--:--</b></div>
+    ${number === todayNumber
+      ? `<div class="countdown"><span>Next puzzle in</span><b data-countdown>--:--:--</b></div>`
+      : `<div style="height:20px"></div>`}
+
     <button class="btn btn--share" data-share>Share result</button>
+    <button class="btn btn--ghost" data-archive style="margin-top:10px">Play another day</button>
   `;
 }
 
-function statsBlock(stats) {
-  const winRate = stats.played ? Math.round((stats.wins / stats.played) * 100) : 0;
-  const counts = [1, 2, 3, 4].map((n) => stats.distribution[n] || 0);
-  const max = Math.max(1, ...counts);
-  const current = state?.status === "won" ? state.rows.length : null;
+function ordinal(n) {
+  const suffix = ["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th";
+  return `${n}${suffix}`;
+}
 
-  const bars = [1, 2, 3, 4]
+function crowdLine() {
+  const c = state.crowd;
+  if (!c?.total) return "";
+  const players = c.total.toLocaleString();
+  const avg = c.averageScore.toFixed(1);
+  const beat = Math.round(c.percentile);
+  return `<p class="crowd">Average today is <b>${avg}/${ITEMS_PER_PUZZLE}</b> across ${players} players.` +
+    (state.played ? ` You beat <b>${beat}%</b> of them.` : "") + `</p>`;
+}
+
+/** Upgrade an already-open sheet, if one happens to be showing. */
+function paintCrowd() {
+  const slot = document.getElementById("crowd-slot");
+  if (slot) slot.innerHTML = crowdLine();
+}
+
+/**
+ * Lifetime record. Four plain numbers — deliberately not a bar chart, because
+ * with one attempt per puzzle there is no guess curve to plot.
+ */
+function recordBlock() {
+  const s = computeStats(state.todayNumber);
+  return `
+    <h3>Your record</h3>
+    <div class="statgrid">
+      <div><b>${s.played}</b><span>Played</span></div>
+      <div><b>${s.played ? s.average.toFixed(1) : "—"}</b><span>Avg score</span></div>
+      <div><b>${s.perfect}</b><span>Perfect</span></div>
+      <div><b>${s.streak}</b><span>Day streak</span></div>
+    </div>
+  `;
+}
+
+function archiveSheet() {
+  const { todayNumber, number: current } = state;
+  const plays = loadPlays();
+
+  const items = archiveNumbers(todayNumber, ARCHIVE_DAYS)
     .map((n) => {
-      const v = stats.distribution[n] || 0;
-      const pct = Math.max(9, Math.round((v / max) * 100));
-      return `<div class="dist__row"><span>${n}</span>` +
-        `<div class="dist__bar ${current === n ? "is-current" : ""}" style="width:${pct}%">${v}</div></div>`;
+      const play = plays[n];
+      const badge = play
+        ? `<span class="archive__score ${play.score === ITEMS_PER_PUZZLE ? "is-perfect" : ""}">${play.score}/${ITEMS_PER_PUZZLE}</span>`
+        : `<span class="archive__score is-new">Play</span>`;
+      return `<li><button class="archive__item" data-goto="${n}" aria-current="${n === current}">
+          <span><span class="archive__when">${relativeDay(n, todayNumber)}</span>
+          <span class="archive__no">${GAME_NAME} #${n}</span></span>${badge}
+        </button></li>`;
     })
     .join("");
 
   return `
-    <h3>Your statistics</h3>
-    <div class="statgrid">
-      <div><b>${stats.played}</b><span>Played</span></div>
-      <div><b>${winRate}</b><span>Win %</span></div>
-      <div><b>${stats.currentStreak}</b><span>Current streak</span></div>
-      <div><b>${stats.maxStreak}</b><span>Max streak</span></div>
-    </div>
-    <h3>Guess distribution</h3>
-    <div class="dist">${bars}</div>
+    <h2>Past puzzles</h2>
+    <p>The last ${Math.min(ARCHIVE_DAYS, todayNumber)} days. Miss one and you can still go back for it — but each puzzle is still a single attempt.</p>
+    <ul class="archive">${items}</ul>
   `;
-}
-
-/** Upgrade the open sheet with the day's global numbers, if the API answered. */
-function globalLine(global) {
-  if (!global?.total) return "";
-  const players = global.total.toLocaleString();
-  const line = state.status === "won"
-    ? `You beat <b>${Math.round(global.percentile)}%</b> of ${players} players today.`
-    : `<b>${Math.round((global.solvedRate ?? 0) * 100)}%</b> of ${players} players solved it today.`;
-  return `<p class="percentile">${line}</p>`;
-}
-
-/** Upgrade an already-open sheet, if one happens to be showing. */
-function renderGlobal(global) {
-  const slot = document.getElementById("global-slot");
-  if (slot) slot.innerHTML = globalLine(global);
 }
 
 function helpSheet() {
   return `
     <h2>How to play</h2>
-    <p>Six things. One hidden order. <strong>Four tries.</strong></p>
+    <p>Six things. Put them in the right order. <strong>You get one attempt.</strong></p>
     <ul class="rules">
-      <li>Drag the rows into the order you think is right, then submit.</li>
-      <li>Each row tells you how close that item is to its true position:</li>
+      <li>Drag the rows into the order you think is correct.</li>
+      <li>Lock it in. Every item is either in its exact place or it isn't — there's no half credit.</li>
     </ul>
     <div class="demo">
-      <div class="demo__row is-exact"><span>1</span>Exactly right</div>
-      <div class="demo__row is-near"><span>2</span>One place off</div>
-      <div class="demo__row is-far"><span>3</span>Two or more places off</div>
+      <div class="demo__row is-hit"><span>1</span>Right place<em>counts</em></div>
+      <div class="demo__row is-miss"><span>2</span>Wrong place<em>doesn't</em></div>
     </div>
     <ul class="rules">
-      <li>Get all six <b>green</b> to win.</li>
-      <li>A new puzzle arrives every day at midnight, your time.</li>
+      <li>Then you see <b>the real order and the actual numbers</b> behind it. That's the point.</li>
+      <li>A new puzzle lands every day at midnight, your time. The last ${ARCHIVE_DAYS} days stay open.</li>
       <li>No signup. No googling. That's cheating and you know it.</li>
     </ul>
     <p style="margin-top:16px">Keyboard: focus a row, press <strong>Space</strong> to lift it,
@@ -396,12 +422,14 @@ function helpSheet() {
 }
 
 function statsSheet() {
+  const s = computeStats(state.todayNumber);
   return `
-    <h2>Statistics</h2>
-    ${statsBlock(loadStats())}
+    <h2>Your record</h2>
+    ${recordBlock()}
+    ${s.played ? `<p style="margin-top:14px">Best so far: <strong>${s.best}/${ITEMS_PER_PUZZLE}</strong>.</p>` : `<p style="margin-top:14px">Nothing played yet.</p>`}
     <div class="countdown"><span>Next puzzle in</span><b data-countdown>--:--:--</b></div>
-    ${state.status !== "playing" ? `<button class="btn btn--share" data-share>Share result</button>` : ""}
-    <button class="btn btn--ghost" data-reset style="margin-top:10px">Reset statistics</button>
+    <button class="btn btn--ghost" data-archive>Past puzzles</button>
+    <button class="btn btn--ghost" data-reset style="margin-top:10px">Reset my record</button>
   `;
 }
 
@@ -410,11 +438,9 @@ function startCountdown(node) {
   const tick = () => {
     const now = new Date();
     const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
-    let s = Math.max(0, Math.floor((midnight - now) / 1000));
-    const h = String(Math.floor(s / 3600)).padStart(2, "0");
-    const m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
-    const sec = String(s % 60).padStart(2, "0");
-    node.textContent = `${h}:${m}:${sec}`;
+    const s = Math.max(0, Math.floor((midnight - now) / 1000));
+    const pad = (n) => String(n).padStart(2, "0");
+    node.textContent = `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
   };
   tick();
   countdownTimer = setInterval(tick, 1000);

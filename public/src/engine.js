@@ -1,21 +1,26 @@
 /**
- * Rankle game engine — pure, DOM-free, deterministic.
+ * Orders game engine — pure, DOM-free, deterministic.
  *
- * An "order" is an array of item indices into the puzzle's canonical
- * `items` array, which is stored already sorted so that index 0 is rank #1.
- * The solved order is therefore always [0, 1, 2, 3, 4, 5].
+ * One puzzle a day, one attempt at it. An "order" is an array of item indices
+ * into the puzzle's canonical `items` array, which is stored already sorted so
+ * that index 0 is rank #1. The correct order is therefore always [0..5].
+ *
+ * Scoring is exact-position only: an item is either in its true slot or it is
+ * not. There is no partial credit, and no feedback loop — you commit once and
+ * the real order is revealed with the numbers behind it.
  */
 
-export const MAX_TRIES = 4;
 export const ITEMS_PER_PUZZLE = 6;
 
-/** Per-slot feedback tiers. */
-export const EXACT = 2; // right item, right place
-export const NEAR = 1; // off by exactly one place
-export const FAR = 0; // off by two or more
+/** How many days back the archive reaches, today included. */
+export const ARCHIVE_DAYS = 7;
 
-/** The launch date. Puzzle #1 is the local day this lands on. */
-export const EPOCH = { year: 2026, month: 9, day: 17 };
+/**
+ * The launch date — the local day that is puzzle #1.
+ * Moving this shifts which puzzle every date maps to, so change it before
+ * launch and not after.
+ */
+export const EPOCH = { year: 2026, month: 9, day: 12 };
 
 /** Small fast seeded PRNG (mulberry32) — same seed, same sequence, everywhere. */
 export function makeRng(seed) {
@@ -30,9 +35,9 @@ export function makeRng(seed) {
 }
 
 /**
- * Number of whole days from EPOCH to `date`, in the player's own timezone.
+ * Whole days from EPOCH to `date`, in the player's own timezone.
  *
- * Both endpoints are normalised to local noon before subtracting so that a
+ * Both endpoints are normalised to local noon before subtracting, so a
  * daylight-saving shift (which moves midnight by an hour) can never round the
  * difference to the wrong day.
  */
@@ -42,19 +47,39 @@ export function dayIndex(date = new Date(), epoch = EPOCH) {
   return Math.floor((today - start) / 86400000);
 }
 
-/** 1-based puzzle number shown to the player and used to bucket global stats. */
+/** 1-based puzzle number: what the player sees and what global stats bucket by. */
 export function puzzleNumber(date = new Date(), epoch = EPOCH) {
   return dayIndex(date, epoch) + 1;
 }
 
-/** Local calendar date as YYYY-MM-DD — the key a day's saved progress hangs on. */
+/** The local calendar date a given puzzle number belongs to. */
+export function dateForNumber(number, epoch = EPOCH) {
+  return new Date(epoch.year, epoch.month - 1, epoch.day + (number - 1), 12, 0, 0, 0);
+}
+
+/** Local calendar date as YYYY-MM-DD. */
 export function localDateKey(date = new Date()) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 /**
- * Pick the day's puzzle. The library cycles once exhausted, but each lap is
+ * The archive: today's puzzle first, then back through the week.
+ * Bounded at puzzle #1, so a freshly launched game shows only what exists
+ * rather than offering days that never happened.
+ */
+export function archiveNumbers(todayNumber, span = ARCHIVE_DAYS) {
+  const count = Math.max(0, Math.min(span, todayNumber));
+  return Array.from({ length: count }, (_, i) => todayNumber - i);
+}
+
+/** True when a number is a real, already-released puzzle. */
+export function isPlayable(number, todayNumber) {
+  return Number.isInteger(number) && number >= 1 && number <= todayNumber;
+}
+
+/**
+ * Pick a puzzle. The library cycles once exhausted, but each lap is
  * re-shuffled so the sequence does not visibly repeat.
  */
 export function selectPuzzle(puzzles, number) {
@@ -65,7 +90,6 @@ export function selectPuzzle(puzzles, number) {
   const within = ((index % n) + n) % n;
   if (lap === 0) return puzzles[within];
 
-  // Fisher-Yates over the index space, seeded by the lap number.
   const rng = makeRng(0x9e3779b9 ^ (lap * 2654435761));
   const order = puzzles.map((_, i) => i);
   for (let i = order.length - 1; i > 0; i--) {
@@ -79,8 +103,8 @@ export function selectPuzzle(puzzles, number) {
  * The starting arrangement every player sees, derived from the puzzle number
  * so it is identical worldwide.
  *
- * Re-rolled until no item sits in its correct slot: opening on a free 🟩 (or,
- * worse, on the solution) would hand out information nobody earned.
+ * Re-rolled until no item sits in its correct slot. With a single attempt, a
+ * free correct placement in the opening deal would be an outright gift.
  */
 export function openingOrder(number, size = ITEMS_PER_PUZZLE) {
   for (let attempt = 0; attempt < 64; attempt++) {
@@ -92,42 +116,38 @@ export function openingOrder(number, size = ITEMS_PER_PUZZLE) {
     }
     if (order.every((item, slot) => item !== slot)) return order;
   }
-  // Unreachable in practice; a rotation is a guaranteed derangement.
   return Array.from({ length: size }, (_, i) => (i + 1) % size);
 }
 
 /**
- * Grade one submitted order.
- * @returns {number[]} one tier per slot, aligned to the submitted order.
+ * Grade a submitted order.
+ * @returns {boolean[]} one flag per slot — true when that item is exactly right.
  */
-export function gradeGuess(order, size = ITEMS_PER_PUZZLE) {
+export function gradeOrder(order, size = ITEMS_PER_PUZZLE) {
   if (!Array.isArray(order) || order.length !== size) {
     throw new Error(`expected an order of ${size} items, got ${order?.length}`);
   }
-  return order.map((item, slot) => {
-    const delta = Math.abs(item - slot);
-    if (delta === 0) return EXACT;
-    if (delta === 1) return NEAR;
-    return FAR;
+  return order.map((item, slot) => item === slot);
+}
+
+/** How many items landed in their true position, 0 to 6. */
+export function scoreOrder(order, size = ITEMS_PER_PUZZLE) {
+  return gradeOrder(order, size).filter(Boolean).length;
+}
+
+/** A perfect order. Note 5/6 is impossible — one item out forces a second. */
+export function isPerfect(score, size = ITEMS_PER_PUZZLE) {
+  return score === size;
+}
+
+/**
+ * Where the player put each item, indexed by the item's true rank.
+ * Drives the reveal, which shows the real order against what was submitted.
+ */
+export function placementsByTrueRank(order, size = ITEMS_PER_PUZZLE) {
+  const placed = new Array(size).fill(-1);
+  order.forEach((item, slot) => {
+    if (item >= 0 && item < size) placed[item] = slot;
   });
-}
-
-/** True when every slot is EXACT. */
-export function isSolved(marks) {
-  return marks.length > 0 && marks.every((m) => m === EXACT);
-}
-
-/** How many slots are exactly right — used for the "4/6 in place" readout. */
-export function exactCount(marks) {
-  return marks.filter((m) => m === EXACT).length;
-}
-
-/** Terminal state check for a list of graded rows. */
-export function isGameOver(rows, maxTries = MAX_TRIES) {
-  if (rows.length === 0) return false;
-  return isSolved(rows[rows.length - 1].marks) || rows.length >= maxTries;
-}
-
-export function didWin(rows) {
-  return rows.length > 0 && isSolved(rows[rows.length - 1].marks);
+  return placed;
 }

@@ -1,35 +1,44 @@
-# Rankle
+# Orders
 
-A daily ranking puzzle. **Six things, one hidden order, four tries.**
+A daily ranking puzzle. **Six things, one order, one attempt.**
 
-Drag the rows into what you think is the right order and submit. Each row tells
-you how close that item is to its true position — 🟩 exactly right, 🟨 one place
-off, ⬜ two or more places off. Get all six green to win. New puzzle every day.
+Drag six things into what you think is the right order and lock it in. Every
+item is either in its exact place or it isn't — there's no partial credit and no
+second guess. Then you get the real order and the actual numbers behind it.
 
 ```
-Rankle #47 3/4
+Orders #47 — 4/6 in place
 
-🟩⬜🟨🟨⬜🟩
-🟩🟨🟩⬜🟩🟨
-🟩🟩🟩🟩🟩🟩
+🟩🟩⬜🟩⬜🟩
 ```
+
+The last seven days stay open, so missing a day doesn't mean missing a puzzle.
 
 ---
 
-## Why this shape
+## The design, and why
 
-Everything here is in service of the share card. The daily games that spread do
-it because a spoiler-free result grid is something people *want* to post, and
-the game exists to produce one:
+**One attempt.** The game is a judgement call you commit to, not a search you
+narrow down. Removing the guess loop removes the feedback ladder with it: there
+is no "close" colour, because a hint tier only means something when you get
+another go.
 
-- **One puzzle a day, same for everyone** — gives people a reason to talk.
-- **Under two minutes** — the cost of playing has to stay near zero.
-- **The grid spoils nothing** — there's a test that enforces this. A friend who
-  hasn't played yet learns only how hard you found it.
-- **No signup, no backend required to play** — page opens, game starts.
-- **A streak to protect** — the reason day 2 happens.
-- **The reveal teaches you something** — the true order with real numbers and a
-  fact is the part people screenshot.
+**Exact placement or nothing.** An item is home or it isn't. Simple to state,
+brutal to score, and it makes 4/6 genuinely worth something.
+
+**The numbers are the reward.** The reveal is the product — the true order,
+the real figures, where you went wrong, and the one fact that makes you go
+*huh*. Everything before it exists to make you care about it.
+
+**The share card spoils nothing.** One line, a score, no labels or values.
+There's a test that enforces it.
+
+### A quirk worth knowing
+
+**5/6 is impossible.** One item out of place necessarily displaces another, so
+real scores are 0, 1, 2, 3, 4 or 6. `tests/engine.test.mjs` pins this by
+brute-forcing all 720 permutations, because the copy and the stats both assume
+it.
 
 ## Running it
 
@@ -39,12 +48,12 @@ npm test         # validates the puzzle library, then runs the unit tests
 npm run build    # regenerates public/pack.js from data/puzzles.mjs
 ```
 
-There are no dependencies. The front end is plain ES modules — no build step,
-no framework, no external requests, which is why it loads instantly.
+No dependencies. The front end is plain ES modules — no build step, no
+framework, no external requests, which is why it loads instantly.
 
-`npm run dev` deliberately returns 503 for `/api/*`. That's the offline path
-the game is designed to survive; to exercise the real backend, use
-`npx wrangler dev` inside `worker/`.
+`npm run dev` deliberately returns 503 for `/api/*`. That's the offline path the
+game is built to survive; use `npx wrangler dev` in `worker/` for the real
+backend.
 
 ## Layout
 
@@ -54,19 +63,37 @@ public/            the deployed site
   styles.css
   pack.js          GENERATED — base64 puzzle pack, do not edit
   src/
-    engine.js      pure game rules: grading, daily selection, dates
-    main.js        app controller, rendering, round flow
+    engine.js      pure rules: scoring, daily selection, dates, archive range
+    main.js        app controller, rendering, one-shot flow, archive routing
     dragList.js    pointer-events reordering (mouse, touch, keyboard)
-    storage.js     localStorage stats and in-progress board
-    share.js       the emoji grid and share/copy handling
+    storage.js     per-puzzle plays, drafts, derived record
+    share.js       the share card
     api.js         backend client — every call degrades to null
     pack.js        decoder for the bundled fallback pack
-    config.js      name, share URL, API origin
+    config.js      name, tagline, share URL, API origin
 data/puzzles.mjs   the puzzle library — the source of truth
 worker/            Cloudflare Worker + D1 stats backend
-scripts/           build and validation
+scripts/           build, validation, dev server
 tests/             node:test suites, no test framework needed
 ```
+
+## The archive
+
+`?d=N` loads puzzle N. The archive sheet lists the last seven days, newest
+first, bounded at puzzle #1 so a freshly launched game never offers a day that
+did not happen. Navigation uses `pushState`, so browser back works and a link to
+a specific day is shareable.
+
+Two rules hold across the archive:
+
+- **A puzzle can only be played once**, ever. `recordPlay` ignores a repeat
+  submission, so going back for an old day cannot rewrite a result or inflate
+  an average.
+- **Only released puzzles are reachable.** The client clamps `?d=`, and the
+  Worker independently refuses anything past its own clock — so a device with
+  its date set forward cannot pull tomorrow's answers.
+
+Change the window with `ARCHIVE_DAYS` in `public/src/engine.js`.
 
 ## Adding puzzles
 
@@ -95,28 +122,29 @@ What it cannot check is whether your ordering is *right*, because `value` is a
 display string by design (it has to hold both `"1 in 292,201,338"` and
 `"243 Earth days"`). Ordering is on the author.
 
-A good puzzle is **surprising but arguable**: the fun is in "wait, hippos kill
-more people than sharks?", and the frustration is in two items nobody could
-separate. Spread the magnitudes out.
+A good puzzle is **surprising but arguable**. The fun is "wait, hippos kill more
+people than sharks?"; the frustration is two items nobody could separate. Spread
+the magnitudes out — with one attempt and exact-only scoring, a puzzle with two
+near-identical values is just a coin flip.
 
 ### On the numbers
 
 The 60 shipped puzzles were authored from the sources cited on each one and are
 rounded approximations, mostly 2024–25 vintage. Five ordering errors and one tie
 were caught and corrected during authoring, which is a decent argument for a
-second pair of eyes before launch. **Fact-check the library before you publish**,
-and re-check the ones that drift — populations, box office, user counts, market
-prices and emissions all move. The evergreen ones (planetary data, melting
-points, letter frequencies) don't.
+second pair of eyes. **Fact-check the library before you publish**, and re-check
+the ones that drift — populations, box office, user counts, prices and emissions
+all move. The evergreen ones (planetary data, melting points, letter
+frequencies) don't.
 
 ## Deploying
 
 ### Static only (no global stats)
 
-`public/` is a plain static directory. Push it to GitHub Pages, Netlify, Vercel
-or anything else. The game is fully playable — the API calls fail, return null,
-and the game falls back to the bundled pack. You lose only the "you beat 73% of
-players" line.
+`public/` is a plain static directory — push it to GitHub Pages, Netlify, Vercel
+or anything else. The game is fully playable: API calls fail, return null, and
+it falls back to the bundled pack. You lose only the "average today is 3.1/6"
+line.
 
 ### With the stats backend
 
@@ -125,44 +153,43 @@ CORS setup and no second host.
 
 ```bash
 cd worker
-npx wrangler d1 create rankle            # copy the database_id into wrangler.toml
-npx wrangler d1 execute rankle --remote --file=./schema.sql
+npx wrangler d1 create orders            # copy the database_id into wrangler.toml
+npx wrangler d1 execute orders --remote --file=./schema.sql
 npx wrangler secret put HASH_SALT        # any long random string
 npx wrangler deploy
 ```
 
-The Worker exposes:
-
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/daily?n=N` | That day's puzzle. Preferred over the bundled pack because the pack necessarily ships every future answer to every visitor. |
-| `POST /api/result` | Records a finished round, returns the day's distribution and your percentile. |
-| `GET /api/stats?n=N` | Reads the distribution without contributing to it. |
+| `GET /api/puzzle?n=N` | One released puzzle. Preferred over the bundled pack, which necessarily ships every future answer to every visitor. |
+| `POST /api/result` | Records a score, returns the puzzle's average and your percentile. |
+| `GET /api/stats?n=N` | Reads the aggregate without contributing to it. |
 
-**On privacy:** the database stores aggregate counts plus a salted, truncated
+**On privacy:** the database holds aggregate counts plus a salted, truncated
 SHA-256 of the caller's IP, used only to stop one client submitting the same
-puzzle twice. Raw addresses are never written, dedup rows are pruned after 30
+puzzle twice. Raw addresses are never written, dedup rows are pruned after 60
 days, and there is no cookie, account or cross-day identifier.
 
-**On trust:** grading happens client-side, so submitted results are
+**On trust:** scoring happens client-side, so submitted results are
 self-reported and the global numbers are a fun statistic, not a leaderboard. If
-you ever want them to be authoritative, move grading into the Worker and keep
-the answers server-side — the engine is already pure and shared by both.
+you want them authoritative, move scoring into the Worker and keep the answers
+server-side — the engine is already pure and shared by both.
 
 ## Renaming it
 
-`Rankle` is a placeholder you can change in one place: `public/src/config.js`
-holds the name, tagline and share URL. Also update the `<title>` and Open Graph
-tags in `public/index.html`, and the URL in `public/sitemap.xml`.
+`public/src/config.js` holds the name, tagline and share URL. Also update the
+`<title>` and Open Graph tags in `public/index.html`, and the URL in
+`public/sitemap.xml`.
 
 ## Before you launch
 
 - [ ] Fact-check the puzzle library (see above).
-- [ ] Set `SHARE_URL` in `config.js` to your real domain.
 - [ ] Set `EPOCH` in `public/src/engine.js` to your launch date — it decides
-      which puzzle is #1.
+      which puzzle is #1. It currently sits a week in the past so the archive
+      has something in it from day one; with a same-day epoch the archive
+      correctly shows a single entry.
+- [ ] Set `SHARE_URL` in `config.js` to your real domain.
 - [ ] Add a real Open Graph image. The link preview does a lot of the work when
       someone drops the URL into a group chat, and right now there isn't one.
-- [ ] Decide what happens after 60 days. The library cycles and re-shuffles each
-      lap, so it never runs dry, but returning players will eventually see a
-      repeat. Keep authoring.
+- [ ] Keep authoring. The library cycles and re-shuffles each lap so it never
+      runs dry, but returning players will eventually see a repeat.

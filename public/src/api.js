@@ -3,7 +3,7 @@
  *
  * Hard rule: the backend is an enhancement, never a dependency. Every call
  * resolves to null on any failure and the caller carries on with the local
- * puzzle pack. A dead API costs the player the percentile line, nothing else.
+ * puzzle pack. A dead API costs the player one line of context, nothing else.
  */
 import { API_BASE, API_TIMEOUT_MS } from "./config.js";
 
@@ -26,28 +26,27 @@ async function request(path, options = {}) {
 }
 
 /**
- * Today's puzzle, served fresh.
+ * Fetch one puzzle by number.
  *
  * Preferred over the bundled pack because the pack necessarily ships every
- * future answer to every visitor; the API hands out only the current day.
- * @returns {Promise<object|null>}
+ * future answer to every visitor; the API only serves puzzles already released.
  */
-export function fetchDaily(number) {
-  return request(`/api/daily?n=${encodeURIComponent(number)}`);
+export function fetchPuzzle(number) {
+  return request(`/api/puzzle?n=${encodeURIComponent(number)}`);
 }
 
 /**
- * Report a finished round and get the day's distribution back.
- * @returns {Promise<{total:number, distribution:object, percentile:number}|null>}
+ * Report a finished attempt and get the day's aggregate back.
+ * @returns {Promise<{total:number, averageScore:number, perfectRate:number, percentile:number}|null>}
  */
-export function submitResult({ number, won, tries }) {
+export function submitScore({ number, score }) {
   return request("/api/result", {
     method: "POST",
-    body: JSON.stringify({ number, won, tries }),
+    body: JSON.stringify({ number, score }),
   });
 }
 
-/** Read the day's distribution without contributing to it. */
+/** Read a puzzle's aggregate without contributing to it. */
 export function fetchStats(number) {
   return request(`/api/stats?n=${encodeURIComponent(number)}`);
 }

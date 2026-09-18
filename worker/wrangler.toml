@@ -1,4 +1,4 @@
-name = "rankle"
+name = "orders"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
 
@@ -10,8 +10,8 @@ binding = "ASSETS"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "rankle"
-# Fill in after `npx wrangler d1 create rankle`.
+database_name = "orders"
+# Fill in after `npx wrangler d1 create orders`.
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
 
 # Set the salt as a secret, not here:

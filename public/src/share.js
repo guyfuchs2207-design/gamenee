@@ -1,30 +1,26 @@
 /**
- * The share card — the actual growth engine.
+ * The share card.
  *
- * Rules it has to obey: reveal the shape of the round but never the answer,
- * survive being pasted into any chat app as plain text, and stay short enough
- * that nothing gets truncated.
+ * One attempt means one line of squares — the card states a score and shows
+ * which slots landed, and nothing else. No item, metric or value appears in
+ * it, so posting your result cannot spoil the puzzle for anyone who has not
+ * played it yet. There is a test that enforces exactly that.
  */
-import { EXACT, NEAR, MAX_TRIES } from "./engine.js";
+import { GAME_NAME, SHARE_URL } from "./config.js";
+import { ITEMS_PER_PUZZLE } from "./engine.js";
 
-const SQUARE = { [EXACT]: "🟩", [NEAR]: "🟨" };
-const FAR_SQUARE_LIGHT = "⬜";
-const FAR_SQUARE_DARK = "⬛";
+const HIT = "🟩";
+const MISS = "⬜";
 
-export function marksToRow(marks, dark = false) {
-  const far = dark ? FAR_SQUARE_DARK : FAR_SQUARE_LIGHT;
-  return marks.map((m) => SQUARE[m] || far).join("");
+export function marksToRow(marks) {
+  return marks.map((hit) => (hit ? HIT : MISS)).join("");
 }
 
-/**
- * Build the shareable text.
- * Deliberately contains no item labels and no metric — a friend who has not
- * played yet learns nothing but how hard you found it.
- */
-export function buildShareText({ number, rows, won, dark = false, url = "" }) {
-  const score = won ? `${rows.length}/${MAX_TRIES}` : `X/${MAX_TRIES}`;
-  const grid = rows.map((r) => marksToRow(r.marks, dark)).join("\n");
-  return [`Rankle #${number} ${score}`, "", grid, url].filter(Boolean).join("\n");
+export function buildShareText({ number, marks, score, url = SHARE_URL }) {
+  const headline = score === ITEMS_PER_PUZZLE
+    ? `${GAME_NAME} #${number} — perfect order`
+    : `${GAME_NAME} #${number} — ${score}/${ITEMS_PER_PUZZLE} in place`;
+  return [headline, "", marksToRow(marks), url].filter(Boolean).join("\n");
 }
 
 /**
@@ -32,8 +28,8 @@ export function buildShareText({ number, rows, won, dark = false, url = "" }) {
  * @returns {Promise<"shared"|"copied"|"failed">}
  */
 export async function shareResult(text) {
-  // Desktop Chrome advertises navigator.share but often cannot handle text-only
-  // payloads, so check canShare first where it exists.
+  // Desktop Chrome advertises navigator.share but often cannot handle
+  // text-only payloads, so check canShare first where it exists.
   const canNativeShare =
     typeof navigator !== "undefined" &&
     typeof navigator.share === "function" &&
@@ -44,7 +40,7 @@ export async function shareResult(text) {
       await navigator.share({ text });
       return "shared";
     } catch (err) {
-      // The user dismissing the sheet is a cancel, not a failure to fall back from.
+      // Dismissing the sheet is a cancel, not a failure worth falling back from.
       if (err && err.name === "AbortError") return "shared";
     }
   }
